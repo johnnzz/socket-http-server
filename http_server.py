@@ -50,6 +50,9 @@ def parse_request(request):
     try:
         # decode the first line
         method, uri, version = request_lines[0].split()
+        # if it isn't a supported method, raise NotImplementedError
+        if method != "GET":
+            raise NotImplementedError
         # stuff all the headers into a dict
         headers = {}
         for line in request_lines[1:]:
@@ -151,7 +154,8 @@ def resolve_uri(uri):
                 mime_type = mime_type.encode("utf8")
             else:
                 # unknown mime type
-                content = False
+                raise NotImplementedError
+
     else:
         # no such file or directory
         raise NameError
@@ -192,16 +196,14 @@ def server(log_buffer=sys.stderr):
                 method, uri, version, headers = parse_request(request)
                 print('Decoded request: method "{}", uri "{}", version "{}"'.format(method, uri, version), file=log_buffer)
                 if method:
-                    # try to get the requested data
                     try:
                         content, mime_type = resolve_uri(uri)
                         print("Target of request is mime_type of: ",mime_type, file=log_buffer)
-                        if mime_type:
-                            response = response_ok(content, mime_type)
-                        else:
-                            response = not_implemented()
+                        response = response_ok(content, mime_type)
                     except NameError:
                         response = response_not_found()
+                    except NotImplementedError:
+                        response = not_implemented()
                 else:
                     # empty request
                     response = response_method_not_allowed()
