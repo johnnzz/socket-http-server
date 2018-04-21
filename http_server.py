@@ -1,5 +1,11 @@
 import socket
 import sys
+import mimetypes
+import os
+from subprocess import check_output
+
+WEBROOT="webroot"
+log_buffer = sys.stdout
 
 def response_ok(body=b"This is a minimal response", mimetype=b"text/plain"):
     """
@@ -16,22 +22,60 @@ def response_ok(body=b"This is a minimal response", mimetype=b"text/plain"):
         <html><h1>Welcome:</h1></html>\r\n
         '''
     """
-    pass
+
+    resp = b"\r\n".join([
+                b"HTTP/1.1 200 OK",
+                b"Content-Type: " + mimetype,
+                b"",
+                body,])
+    return resp
 
 
 def parse_request(request):
-    pass
+
+    """
+    Parse the request
+    """
+
+    # fall-through values
+    method = False
+    uri = False
+    version = False
+    headers = {}
+
+    # request can be multiple lines, split them up
+    request_lines = request.splitlines()
+
+    # catch an empty request
+    try:
+        # decode the first line
+        method, uri, version = request_lines[0].split()
+        # stuff all the headers into a dict
+        headers = {}
+        for line in request_lines[1:]:
+            if line:
+                key, value = line.split(": ")
+                headers[key] = value
+    except IndexError:
+        print("Got empty request!", file=log_buffer)
+
+    # return decoded request
+    return (method, uri, version, headers)
 
 
 def response_method_not_allowed():
     """Returns a 405 Method Not Allowed response"""
-    pass
+    print("Sending method not allowed", file=log_buffer)
+    resp = b"\r\n".join([b"HTTP/1.1 405 Method Not Allowed"])
+    return resp
 
 
 def response_not_found():
     """Returns a 404 Not Found response"""
-    pass
-    
+    print("Sending response_not_found", file=log_buffer)
+    resp = b"\r\n".join([b"HTTP/1.1 404 Not Found"])
+    return resp
+
 
 def resolve_uri(uri):
     """
@@ -59,44 +103,95 @@ def resolve_uri(uri):
 
         resolve_uri('/a_page_that_doesnt_exist.html') -> Raises a NameError
 
+    Raise a NameError if the requested content is not present
+    under webroot.
+
+    Fill in the appropriate content and mime_type give the URI.
+
     """
 
-    # TODO: Raise a NameError if the requested content is not present
-    # under webroot.
+    # you have to strip the leading "/" when using strip, else it things it's an absolute path
+    effective_uri = os.path.join(WEBROOT,uri.strip("/"))
 
-    # TODO: Fill in the appropriate content and mime_type give the URI.
-    # See the assignment guidelines for help on "mapping mime-types", though
-    # you might need to create a special case for handling make_time.py
-    content = b"not implemented"
-    mime_type = b"not implemented"
+    # verify the target exists
+    if os.path.exists(effective_uri):
+
+        # check to see if it is a directory
+        if os.path.isdir(effective_uri):
+            print("Requested target is a directory", file=log_buffer)
+            mime_type = "text/plain".encode("utf8")
+            # lazy approach to get semi legible formatted directory listing
+            content = check_output(["ls -l " + effective_uri], shell=True)
+
+        else:
+            # target is a file
+            # guess_type returns a tuple (mime_type, strict), we only care about mime_type
+            mime_type = mimetypes.guess_type(effective_uri)[0]
+            # for easy reference
+            base_type, sub_type = mime_type.split("/")
+            if base_type == "text":
+                # text file processing
+                print("Requested target is a non-binary file", file=log_buffer)
+                with open(effective_uri, 'r') as target_file:
+                    content = target_file.read()
+                content = content.encode("utf8")
+            else:
+                # binary file processing
+                print("Requested target is a binary file", file=log_buffer)
+                with open(effective_uri, 'rb') as target_file:
+                    content=target_file.read()
+            mime_type = mime_type.encode("utf8")
+    else:
+        # no such file or directory
+        raise NameError
 
     return content, mime_type
 
 
 def server(log_buffer=sys.stderr):
-    address = ('127.0.0.1', 10000)
+
+    # hack to figure out my outgoing ip address
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    myaddr = s.getsockname()[0]
+    s.close()
+
+    address = ('0.0.0.0', 10000)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    print("making a server on {0}:{1}".format(*address), file=log_buffer)
+    print("making a server on {0}:{2}, bound to {1}".format(myaddr, *address), file=log_buffer)
     sock.bind(address)
     sock.listen(1)
 
     try:
         while True:
-            print('waiting for a connection', file=log_buffer)
+            print('Waiting for a connection', file=log_buffer)
             conn, addr = sock.accept()  # blocking
             try:
-                print('connection - {0}:{1}'.format(*addr), file=log_buffer)
+                print('Connection - {0}:{1}'.format(*addr), file=log_buffer)
+                request = ''
                 while True:
-                    data = conn.recv(16)
-                    print('received "{0}"'.format(data), file=log_buffer)
-                    if data:
-                        print('sending data back to client', file=log_buffer)
-                        conn.sendall(data)
-                    else:
-                        msg = 'no more data from {0}:{1}'.format(*addr)
-                        print(msg, log_buffer)
+                    # grab the request
+                    data = conn.recv(1024)
+                    request += data.decode('utf8')
+                    if len(data) < 1024:
                         break
+                print("Received data", file=log_buffer)
+                # parse the request
+                method, uri, version, headers = parse_request(request)
+                print('Decoded request: method "{}", uri "{}", version "{}"'.format(method, uri, version), file=log_buffer)
+                if method:
+                    # try to get the requested data
+                    try:
+                        content, mime_type = resolve_uri(uri)
+                        print("Target of request is mime_type of: ",mime_type, file=log_buffer)
+                        response = response_ok(content, mime_type)
+                    except NameError:
+                        response = response_not_found()
+                else:
+                    # empty request
+                    response = response_method_not_allowed()
+                conn.sendall(response)
             finally:
                 conn.close()
 
