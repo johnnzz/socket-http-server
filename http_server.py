@@ -59,6 +59,7 @@ def parse_request(request):
             if line:
                 key, value = line.split(": ")
                 headers[key] = value
+        #print("DEBUG",headers)
     except IndexError:
         print("Got empty request!", file=log_buffer)
 
@@ -77,6 +78,13 @@ def response_not_found():
     """Returns a 404 Not Found response"""
     print("Sending response_not_found", file=log_buffer)
     resp = b"\r\n".join([b"HTTP/1.1 404 Not Found"])
+    return resp
+
+
+def bad_request():
+    """Returns a 400 Bad Request response"""
+    print("Sending bad_request", file=log_buffer)
+    resp = b"\r\n".join([b"HTTP/1.1 400 Bad Request"])
     return resp
 
 
@@ -171,6 +179,9 @@ def server(log_buffer=sys.stderr):
     myaddr = s.getsockname()[0]
     s.close()
 
+    # what are valid host references for this web server
+    my_names = [ myaddr, "127.0.0.1", "localhost" ]
+
     address = ('0.0.0.0', 10000)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -195,19 +206,32 @@ def server(log_buffer=sys.stderr):
                 # parse the request
                 method, uri, version, headers = parse_request(request)
                 print('Decoded request: method "{}", uri "{}", version "{}"'.format(method, uri, version), file=log_buffer)
-                if method:
-                    try:
-                        content, mime_type = resolve_uri(uri)
-                        print("Target of request is mime_type of: ",mime_type, file=log_buffer)
-                        response = response_ok(content, mime_type)
-                    except NameError:
-                        response = response_not_found()
-                    except NotImplementedError:
-                        response = not_implemented()
+                # make sure the request host matches the one(s) we are serving
+                try:
+                    valid_host = headers["Host"].split(":")[0] in my_names
+                except Exception as err:
+                    print("No host specified")
+                    valid_host = False
+                if valid_host:
+                    print("Valid host specified")
+                    if method:
+                        try:
+                            content, mime_type = resolve_uri(uri)
+                            print("Target of request is mime_type of: ",mime_type, file=log_buffer)
+                            response = response_ok(content, mime_type)
+                        except NameError:
+                            response = response_not_found()
+                        except NotImplementedError:
+                            response = not_implemented()
+                    else:
+                        # empty request
+                        response = response_method_not_allowed()
                 else:
-                    # empty request
-                    response = response_method_not_allowed()
+                    # if they ask us for a host we aren't serving, give them a 400
+                    response = bad_request()
+
                 conn.sendall(response)
+
             finally:
                 conn.close()
 
