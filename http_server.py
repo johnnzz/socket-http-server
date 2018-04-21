@@ -77,6 +77,13 @@ def response_not_found():
     return resp
 
 
+def not_implemented():
+    """Returns a 404 Not Found response"""
+    print("Sending not implemented", file=log_buffer)
+    resp = b"\r\n".join([b"HTTP/1.1 501 Not Implemented"])
+    return resp
+
+
 def resolve_uri(uri):
     """
     This method should return appropriate content and a mime type.
@@ -127,20 +134,24 @@ def resolve_uri(uri):
             # target is a file
             # guess_type returns a tuple (mime_type, strict), we only care about mime_type
             mime_type = mimetypes.guess_type(effective_uri)[0]
-            # for easy reference
-            base_type, sub_type = mime_type.split("/")
-            if base_type == "text":
-                # text file processing
-                print("Requested target is a non-binary file", file=log_buffer)
-                with open(effective_uri, 'r') as target_file:
-                    content = target_file.read()
-                content = content.encode("utf8")
+            if mime_type:
+                # for easy reference
+                base_type, sub_type = mime_type.split("/")
+                if base_type == "text":
+                    # text file processing
+                    print("Requested target is a non-binary file", file=log_buffer)
+                    with open(effective_uri, 'r') as target_file:
+                        content = target_file.read()
+                    content = content.encode("utf8")
+                else:
+                    # binary file processing
+                    print("Requested target is a binary file", file=log_buffer)
+                    with open(effective_uri, 'rb') as target_file:
+                        content=target_file.read()
+                mime_type = mime_type.encode("utf8")
             else:
-                # binary file processing
-                print("Requested target is a binary file", file=log_buffer)
-                with open(effective_uri, 'rb') as target_file:
-                    content=target_file.read()
-            mime_type = mime_type.encode("utf8")
+                # unknown mime type
+                content = False
     else:
         # no such file or directory
         raise NameError
@@ -185,7 +196,10 @@ def server(log_buffer=sys.stderr):
                     try:
                         content, mime_type = resolve_uri(uri)
                         print("Target of request is mime_type of: ",mime_type, file=log_buffer)
-                        response = response_ok(content, mime_type)
+                        if mime_type:
+                            response = response_ok(content, mime_type)
+                        else:
+                            response = not_implemented()
                     except NameError:
                         response = response_not_found()
                 else:
